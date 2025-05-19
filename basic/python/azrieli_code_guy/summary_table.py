@@ -117,18 +117,19 @@ def load_trips_data(recalculate=False):
 
 def compute_salary(km, base, extra,
                    night_multiplier, night_ratio,
-                   weekend_multiplier, week_ratio):
-    return (min(km, 200) * base + max(km - 200, 0) * (base + extra)) * (
+                   weekend_multiplier, week_ratio, extra_alone=False):
+    final_extra = extra if extra_alone else base + extra
+    return (min(km, 200) * base + max(km - 200, 0) * final_extra) * (
             1 + night_multiplier * night_ratio + weekend_multiplier * week_ratio)
 
 
-def compute_summary_df(drivers_df, salary_df, trips_df):
+def compute_summary_df(drivers_df, salary_df, trips_df, extra_alone=False):
     trips_salary_df = pd.merge(trips_df, salary_df, on='customer')
     # TODO: salary seems quite high, verify
     trips_salary_df['salary'] = trips_salary_df.apply(
         lambda row: compute_salary(row['km'], row['basic_taarif'], row['extra_milage'],
                                    row['night_bonus'], row['night_ratio'],
-                                   row['weekend_bonus'], row['weekend_ratio']), axis=1)
+                                   row['weekend_bonus'], row['weekend_ratio'], extra_alone), axis=1)
     drivers_salary_df = trips_salary_df[['driver_id', 'salary', 'month_year', 'km']] \
         .groupby(['driver_id', 'month_year']) \
         .agg(total_income=('salary', 'sum'),
@@ -148,9 +149,13 @@ def compute_summary_df(drivers_df, salary_df, trips_df):
     summary_df = summary_df[['driver_id', 'month', 'total_income', 'total_km', 'gender', 'age', 'vetek']]
     # summary_df['age'] = summary_df['age'].fillna(summary_df['age'].mean())
     summary_df = summary_df.set_index(['driver_id', 'month']).sort_index()
-    summary_df.to_csv(os.path.join(DATA_PATH, 'summary_df.csv'))
-    summary_df.to_excel(os.path.join(DATA_PATH, 'summary_df.xlsx'))
+    save_summary(summary_df)
     return summary_df
+
+
+def save_summary(summary_df, name='summary_df'):
+    summary_df.to_csv(os.path.join(DATA_PATH, f'{name}.csv'))
+    summary_df.to_excel(os.path.join(DATA_PATH, f'{name}.xlsx'))
 
 
 if __name__ == '__main__':
