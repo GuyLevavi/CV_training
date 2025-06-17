@@ -5,6 +5,7 @@ WARNING: you SHOULD NOT use ".to()" or ".cuda()" in each implementation block.
 import torch
 import random
 import statistics
+
 from linear_classifier import sample_batch
 
 
@@ -116,7 +117,11 @@ def nn_forward_pass(params, X):
     # shape (N, C).                                                            #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    Z = X @ W1 + b1
+    H = torch.clamp(Z, min=0)
+    S = H @ W2 + b2
+    hidden = Z
+    scores = S
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -176,7 +181,12 @@ def nn_forward_backward(params, X, y=None, reg=0.0):
     # (Check Numeric Stability in http://cs231n.github.io/linear-classify/).   #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    # scores -= torch.max(scores, dim=1, keepdim=True)[0]  # numerical stability
+    exp_scores = torch.exp(scores)  # [N, C]
+    probs = exp_scores / exp_scores.sum(dim=1, keepdim=True)  # [N, C]
+    correct_log_probs = -torch.log(probs[torch.arange(N), y])  # [N]
+    loss = correct_log_probs.mean()
+    loss += reg * (torch.sum(W1 * W1) + torch.sum(W2 * W2))
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -190,7 +200,28 @@ def nn_forward_backward(params, X, y=None, reg=0.0):
     # tensor of same size                                                     #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    Z = h1
+    H = torch.clamp(Z, min=0)
+
+    probs[torch.arange(N), y] -= 1
+    dS = probs / N
+
+    dW2 = H.T @ dS
+    db2 = dS.sum(dim=0)
+
+    dH = dS @ W2.T
+    dZ = dH * (Z > 0).float()
+
+    dW1 = X.T @ dZ
+    db1 = dZ.sum(dim=0)
+
+    dW1 += 2 * reg * W1
+    dW2 += 2 * reg * W2
+
+    grads['W1'] = dW1
+    grads['b1'] = db1
+    grads['W2'] = dW2
+    grads['b2'] = db2
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -260,7 +291,8 @@ def nn_train(params, loss_func, pred_func, X, y, X_val, y_val,
     # stored in the grads dictionary defined above.                         #
     #########################################################################
     # Replace "pass" statement with your code
-    pass
+    for param_name in params.keys():
+        params[param_name] -= learning_rate * grads[param_name]
     #########################################################################
     #                             END OF YOUR CODE                          #
     #########################################################################
@@ -316,7 +348,8 @@ def nn_predict(params, loss_func, X):
   # TODO: Implement this function; it should be VERY simple!                #
   ###########################################################################
   # Replace "pass" statement with your code
-  pass
+  score, _ = nn_forward_pass(params, X)
+  y_pred = torch.argmax(score, dim=1)
   ###########################################################################
   #                              END OF YOUR CODE                           #
   ###########################################################################
@@ -351,7 +384,10 @@ def nn_get_search_params():
   # classifier.                                                             #
   ###########################################################################
   # Replace "pass" statement with your code
-  pass
+  learning_rates = [1e-2, 1]
+  hidden_sizes = [128]
+  regularization_strengths = [1e-4, 1e-2]
+  learning_rate_decays = [0.95]
   ###########################################################################
   #                           END OF YOUR CODE                              #
   ###########################################################################
@@ -405,7 +441,30 @@ def find_best_net(data_dict, get_param_set_fn):
   # automatically like we did on the previous exercises.                      #
   #############################################################################
   # Replace "pass" statement with your code
-  pass
+  learning_rates, hidden_sizes, regularization_strengths, learning_rate_decays = nn_get_search_params()
+  num_models = len(learning_rates) * len(hidden_sizes) * len(regularization_strengths) * len(learning_rate_decays)
+  i = 0
+  for lr in learning_rates:
+      for reg in regularization_strengths:
+          for ld in learning_rate_decays:
+              for hs in hidden_sizes:
+                  i += 1
+                  net = TwoLayerNet(3 * 32 * 32,
+                                    hs,
+                                    10,
+                                    device=data_dict['X_train'].device,
+                                    dtype=data_dict['X_train'].dtype)
+                  stats = net.train(data_dict['X_train'], data_dict['y_train'],
+                                    data_dict['X_val'], data_dict['y_val'],
+                                    num_iters=3000, batch_size=1000,
+                                    learning_rate=lr, learning_rate_decay=ld,
+                                    reg=reg, verbose=False)
+                  val_acc = stats['val_acc_history'][-1]
+                  print(f'{i} / {num_models} -- lr {lr} reg {reg} ld {ld} hs {hs} val acc {val_acc}')
+                  if val_acc > best_val_acc:
+                      best_val_acc = val_acc
+                      best_net = net
+                      best_stat = stats
   #############################################################################
   #                               END OF YOUR CODE                            #
   #############################################################################

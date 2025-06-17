@@ -126,7 +126,8 @@ def svm_loss_naive(W, X, y, reg):
         # that the loss is being computed.                                    #
         #######################################################################
         # Replace "pass" statement with your code
-        pass
+        dW[:, j] += X[i]
+        dW[:, y[i]] -= X[i]
         #######################################################################
         #                       END OF YOUR CODE                              #
         #######################################################################
@@ -144,7 +145,8 @@ def svm_loss_naive(W, X, y, reg):
   # Compute the gradient of the loss function and store it in dW. (part 2)    #
   #############################################################################
   # Replace "pass" statement with your code
-  pass
+  dW /= num_train
+  dW += 2 * reg * W
   #############################################################################
   #                             END OF YOUR CODE                              #
   #############################################################################
@@ -178,7 +180,14 @@ def svm_loss_vectorized(W, X, y, reg):
   # result in loss.                                                           #
   #############################################################################
   # Replace "pass" statement with your code
-  pass
+  num_train = X.size(0)
+  scores = X @ W
+  correct_scores = scores[torch.arange(num_train), y].unsqueeze(1)
+  margins = scores - correct_scores + 1
+  margins[torch.arange(num_train), y] = 0
+  margins = torch.clamp(margins, min=0)
+  loss = margins.sum()
+  loss /= num_train
   #############################################################################
   #                             END OF YOUR CODE                              #
   #############################################################################
@@ -193,7 +202,12 @@ def svm_loss_vectorized(W, X, y, reg):
   # loss.                                                                     #
   #############################################################################
   # Replace "pass" statement with your code
-  pass
+  mask = (margins > 0).double()
+  row_sum = mask.sum(dim=1)
+  mask[torch.arange(num_train), y] = -row_sum
+  dW = X.T @ mask
+  dW /= num_train
+  dW += 2 * reg * W
   #############################################################################
   #                             END OF YOUR CODE                              #
   #############################################################################
@@ -216,7 +230,9 @@ def sample_batch(X, y, num_train, batch_size):
   # Hint: Use torch.randint to generate indices.                          #
   #########################################################################
   # Replace "pass" statement with your code
-  pass
+  indices = torch.randint(num_train, size=(batch_size,))
+  X_batch = X[indices]
+  y_batch = y[indices]
   #########################################################################
   #                       END OF YOUR CODE                                #
   #########################################################################
@@ -274,7 +290,7 @@ def train_linear_classifier(loss_func, W, X, y, learning_rate=1e-3,
     # Update the weights using the gradient and the learning rate.          #
     #########################################################################
     # Replace "pass" statement with your code
-    pass
+    W -= learning_rate * grad
     #########################################################################
     #                       END OF YOUR CODE                                #
     #########################################################################
@@ -305,7 +321,8 @@ def predict_linear_classifier(W, X):
   # Implement this method. Store the predicted labels in y_pred.            #
   ###########################################################################
   # Replace "pass" statement with your code
-  pass
+  scores = X @ W
+  y_pred = torch.argmax(scores, dim=1)
   ###########################################################################
   #                           END OF YOUR CODE                              #
   ###########################################################################
@@ -331,7 +348,8 @@ def svm_get_search_params():
   # TODO:   add your own hyper parameter lists.                             #
   ###########################################################################
   # Replace "pass" statement with your code
-  pass
+  learning_rates = [1e-4, 1e-3, 1e-2]
+  regularization_strengths = [1e-3, 1e-2, 1e-1, 1e0, 1e1]
   ###########################################################################
   #                           END OF YOUR CODE                              #
   ###########################################################################
@@ -377,7 +395,11 @@ def test_one_param_set(cls, data_dict, lr, reg, num_iters=2000):
   # num_iters = 100
 
   # Replace "pass" statement with your code
-  pass
+  cls.train(data_dict['X_train'], data_dict['y_train'], lr, reg, num_iters)
+  y_train_pred = cls.predict(data_dict['X_train'])
+  y_val_pred = cls.predict(data_dict['X_val'])
+  train_acc = 100.0 * (data_dict['y_train'] == y_train_pred).double().mean().item()
+  val_acc = 100.0 * (data_dict['y_val'] == y_val_pred).double().mean().item()
   ############################################################################
   #                            END OF YOUR CODE                              #
   ############################################################################
@@ -422,7 +444,25 @@ def softmax_loss_naive(W, X, y, reg):
   # regularization!                                                           #
   #############################################################################
   # Replace "pass" statement with your code
-  pass
+  num_train = X.shape[0]
+  num_classes = W.shape[1]
+  for i in range(num_train):
+    scores = W.t().mv(X[i])
+    exp_scores = torch.exp(scores)
+    probs = exp_scores / exp_scores.sum()
+    for j in range(num_classes):
+      if j == y[i]:
+        loss -= scores[j]
+        dW[:, j] += (probs[j] - 1) * X[i]
+      else:
+        dW[:, j] += probs[j] * X[i]
+    loss += torch.log(exp_scores.sum())
+
+  loss /= num_train
+  loss += reg * torch.sum(W * W)
+
+  dW /= num_train
+  dW += 2 * reg * W
   #############################################################################
   #                          END OF YOUR CODE                                 #
   #############################################################################
@@ -450,7 +490,23 @@ def softmax_loss_vectorized(W, X, y, reg):
   # regularization!                                                           #
   #############################################################################
   # Replace "pass" statement with your code
-  pass
+  scores = X @ W  # [N, C]
+  scores -= torch.max(scores, dim=1, keepdim=True)[0]
+  exp_scores = torch.exp(scores)  # [N, C]
+  probs = exp_scores / exp_scores.sum(dim=1, keepdim=True)  # [N, C]
+
+  num_train = X.shape[0]
+  correct_log_probs = -torch.log(probs[torch.arange(num_train), y])  # [N]
+  loss = correct_log_probs.mean()
+  loss += reg * torch.sum(W * W)
+
+  dscores = probs.clone()
+  dscores[torch.arange(num_train), y] -= 1  # [N, C]
+
+  # Backprop into weights
+  dW = X.T @ dscores  # [D, C]
+  dW /= num_train
+  dW += 2 * reg * W
   #############################################################################
   #                          END OF YOUR CODE                                 #
   #############################################################################
@@ -479,7 +535,8 @@ def softmax_get_search_params():
   # classifier.                                                             #
   ###########################################################################
   # Replace "pass" statement with your code
-  pass
+  learning_rates = [1e-4, 1e-3, 1e-2]
+  regularization_strengths = [1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2]
   ###########################################################################
   #                           END OF YOUR CODE                              #
   ###########################################################################
