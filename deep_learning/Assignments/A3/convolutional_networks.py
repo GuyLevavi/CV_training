@@ -52,7 +52,23 @@ class Conv(object):
     # Note that you are NOT allowed to use anything in torch.nn in other places. #
     ##############################################################################
     # Replace "pass" statement with your code
-    pass
+    s = conv_param['stride']
+    p = conv_param['pad']
+    N, C, H, W = x.shape
+    F, C, HH, WW = w.shape
+
+    # flat patches [N, C, H, W] -> [N, C*HH*WW, H'*W']
+    x_patches = torch.nn.functional.unfold(input=x, kernel_size=(HH, WW), padding=p, stride=s)
+    w_flat = w.view(F, -1)  # [F, C*HH*WW]
+
+    # im2col trick [F, C*HH*WW] * [N, C*HH*WW, H'*W'] -> [N, F, H'*W']
+    # sum over the patch contents, keep batch dimension
+    out_flat = torch.einsum('fc, ncp -> nfp', w_flat, x_patches) + b.view(1, F, 1)
+    # `out_flat = w_flat[None, ...] @ x_patches + b.view(1, F, 1)` does the same
+
+    Hout = 1 + (H + 2 * p - HH) // s
+    Wout = 1 + (W + 2 * p - WW) // s
+    out = out_flat.view(N, F, Hout, Wout)  # [N, F, H', W']
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################
@@ -78,7 +94,27 @@ class Conv(object):
     # TODO: Implement the convolutional backward pass.                          #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    x, w, b, conv_param = cache
+    s = conv_param['stride']
+    p = conv_param['pad']
+    N, C, H, W = x.shape
+    F, C, HH, WW = w.shape
+
+    x_patches = torch.nn.functional.unfold(input=x, kernel_size=(HH, WW),
+                                           padding=p, stride=s)
+    w_flat = w.view(F, -1)
+    dout_flat = dout.view(N, F, -1)  # [N, F, H'*W']
+
+    db = dout_flat.sum(dim=(0, 2))  # [F,]
+
+    # [N, C*HH*WW, H'*W'] @ [N, F, H'*W'] -> [F, C*HH*WW] -> [F, C, HH, WW]
+    dw = torch.einsum('ncp,nfp->fc', x_patches, dout_flat).view_as(w)
+
+    # [F, C*HH*WW] @ [N, F, H'*W'] -> [N, C*HH*WW, H'*W']
+    dx_patches = torch.einsum('fc,nfp->ncp', w_flat,  dout_flat)
+    dx = torch.nn.functional.fold(input=dx_patches, kernel_size=(HH, WW),
+                                  output_size=(H, W),
+                                  stride=s, padding=p)
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################
@@ -111,7 +147,19 @@ class MaxPool(object):
     # TODO: Implement the max-pooling forward pass                              #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    s = pool_param['stride']
+    HH = pool_param['pool_height']
+    WW = pool_param['pool_width']
+    N, C, H, W = x.shape
+    Hout = 1 + (H - HH) // s
+    Wout = 1 + (W - WW) // s
+
+    # flat patches [N, C, H, W] -> [N, C*HH*WW, H'*W']
+    x_patches = torch.nn.functional.unfold(input=x, kernel_size=(HH, WW), stride=s)
+    x_patches = x_patches.view(N, C, HH * WW, Hout * Wout)  # [N, C, HH*WW, H'*W']
+    # max over the patch contents, keep batch dimension and channel dimension
+    out_flat = torch.max(x_patches, dim=2)[0]  # [N, C, H'*W']
+    out = out_flat.view(N, C, Hout, Wout)
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################
@@ -133,7 +181,31 @@ class MaxPool(object):
     # TODO: Implement the max-pooling backward pass                             #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    x, pool_param = cache
+    s = pool_param['stride']
+    HH = pool_param['pool_height']
+    WW = pool_param['pool_width']
+    N, C, H, W = x.shape
+    Hout = 1 + (H - HH) // s
+    Wout = 1 + (W - WW) // s
+
+    x_patches = torch.nn.functional.unfold(input=x, kernel_size=(HH, WW), stride=s)
+    x_patches = x_patches.view(N, C, HH * WW, Hout * Wout)  # [N, C, HH*WW, H'*W']
+
+    # max over the patch contents, keep batch dimension and channel dimension
+    max_idx = torch.argmax(x_patches, dim=2, keepdim=True) # [N, C, 1, H'*W']
+
+    one_hot = torch.zeros_like(x_patches)
+    one_hot.scatter_(2, max_idx, 1.0)
+
+    dout_flat = dout.view(N, C, 1, Hout * Wout)
+    # [N, C, HH*WW, H'*W'] * [N, C, 1, H'*W']
+    # imagine that per patch, the dout value is duplicated but only one remains due to the one-hot mask
+    dx_patches = one_hot * dout_flat
+    dx_patches = dx_patches.view(N, C * HH * WW, Hout * Wout)
+    dx = torch.nn.functional.fold(input=dx_patches, kernel_size=(HH, WW),
+                                    output_size=(H, W),
+                                    stride=s)
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################
