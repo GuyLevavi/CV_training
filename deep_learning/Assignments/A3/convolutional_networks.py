@@ -466,6 +466,11 @@ class DeepConvNet(object):
                                                dtype=dtype, device=device) * weight_scale
       self.params[f'b{i + 1}'] = torch.zeros(channel_dims[i+1],
                                              dtype=dtype, device=device)
+      if self.batchnorm:
+        self.params[f'gamma{i + 1}'] = torch.ones(channel_dims[i+1],
+                                                  dtype=dtype, device=device)
+        self.params[f'beta{i + 1}'] = torch.zeros(channel_dims[i+1],
+                                                  dtype=dtype, device=device)
       if i in self.max_pools:
         spatial_size = spatial_size // 4  # account for 2x2 pooling
 
@@ -588,21 +593,45 @@ class DeepConvNet(object):
     for i in range(self.num_layers):
       if i == self.num_layers - 1:
         out, cache = Linear().forward(out, self.params[f'W{i + 1}'], self.params[f'b{i + 1}'])
+      # this is ugly, but their code doesn't have **kwargs :(
       elif i in self.max_pools:
-        out, cache = Conv_ReLU_Pool().forward(
-          out,
-          self.params[f'W{i + 1}'],
-          self.params[f'b{i + 1}'],
-          conv_param,
-          pool_param
-        )
+        if self.batchnorm:
+            out, cache = Conv_BatchNorm_ReLU_Pool().forward(
+                out,
+                self.params[f'W{i + 1}'],
+                self.params[f'b{i + 1}'],
+                self.params[f'gamma{i + 1}'],
+                self.params[f'beta{i + 1}'],
+                conv_param,
+                self.bn_params[i],
+                pool_param
+            )
+        else:
+          out, cache = Conv_ReLU_Pool().forward(
+            out,
+            self.params[f'W{i + 1}'],
+            self.params[f'b{i + 1}'],
+            conv_param,
+            pool_param
+          )
       else:
-        out, cache = Conv_ReLU().forward(
-          out,
-          self.params[f'W{i + 1}'],
-          self.params[f'b{i + 1}'],
-          conv_param
-        )
+        if self.batchnorm:
+            out, cache = Conv_BatchNorm_ReLU().forward(
+                out,
+                self.params[f'W{i + 1}'],
+                self.params[f'b{i + 1}'],
+                self.params[f'gamma{i + 1}'],
+                self.params[f'beta{i + 1}'],
+                conv_param,
+                self.bn_params[i]
+            )
+        else:
+          out, cache = Conv_ReLU().forward(
+            out,
+            self.params[f'W{i + 1}'],
+            self.params[f'b{i + 1}'],
+            conv_param
+          )
       caches.append(cache)
     scores = out
     ############################################################################
@@ -635,10 +664,23 @@ class DeepConvNet(object):
       if layer_idx == self.num_layers - 1:
         layer = Linear()
       elif layer_idx in self.max_pools:
-        layer = Conv_ReLU_Pool()
+        if self.batchnorm:
+          layer = Conv_BatchNorm_ReLU_Pool()
+        else:
+          layer = Conv_ReLU_Pool()
       else:
-        layer = Conv_ReLU()
-      dout, dw, db = layer.backward(dout, caches.pop())
+        if self.batchnorm:
+          layer = Conv_BatchNorm_ReLU()
+        else:
+          layer = Conv_ReLU()
+
+      backward = layer.backward(dout, caches.pop())
+      if self.batchnorm and layer_idx < self.num_layers - 1:
+        dout, dw, db, dgamma, dbeta = backward
+        grads[f'gamma{layer_idx + 1}'] = dgamma
+        grads[f'beta{layer_idx + 1}'] = dbeta
+      else:
+        dout, dw, db = backward
       grads[f'W{layer_idx+1}'] = dw + 2 * self.reg * self.params[f'W{layer_idx+1}']
       grads[f'b{layer_idx+1}'] = db
     ############################################################################
@@ -974,7 +1016,10 @@ class SpatialBatchNorm(object):
     # Your implementation should be very short; ours is less than five lines. #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    N, C, H, W = x.shape
+    x_flat = x.permute(0, 2, 3, 1).reshape(N*H*W, C)
+    out_flat, cache = BatchNorm().forward(x_flat, gamma, beta, bn_param)
+    out = out_flat.reshape(N, H, W, C).permute(0, 3, 1, 2)
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -1003,7 +1048,10 @@ class SpatialBatchNorm(object):
     # Your implementation should be very short; ours is less than five lines. #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    N, C, H, W = dout.shape
+    dout_flat = dout.permute(0, 2, 3, 1).reshape(N*H*W, C)
+    dx_flat, dgamma, dbeta = BatchNorm().backward(dout_flat, cache)
+    dx = dx_flat.reshape(N, H, W, C).permute(0, 3, 1, 2)
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
