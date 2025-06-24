@@ -82,9 +82,21 @@ class DetectorBackboneWithFPN(nn.Module):
         # there are trainable weights inside it.
         # Add THREE lateral 1x1 conv and THREE output 3x3 conv layers.
         self.fpn_params = nn.ModuleDict()
-
-        # Replace "pass" statement with your code
-        pass
+        for level_name, feature_shape in dummy_out_shapes:
+            self.fpn_params[f"lateral_{level_name}"] = nn.Conv2d(
+                in_channels=feature_shape[1],
+                out_channels=self.out_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            )
+            self.fpn_params[f"output_{level_name}"] = nn.Conv2d(
+                in_channels=self.out_channels,
+                out_channels=self.out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,  # preserve spatial dimensions
+            )
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -111,7 +123,21 @@ class DetectorBackboneWithFPN(nn.Module):
         ######################################################################
 
         # Replace "pass" statement with your code
-        pass
+        fpn_feats['p5'] = self.fpn_params['output_c5'](
+            self.fpn_params['lateral_c5'](backbone_feats['c5'])
+        )
+
+        fpn_feats['p4'] = self.fpn_params['output_c4'](
+            self.fpn_params['lateral_c4'](backbone_feats['c4'])
+        ) + F.interpolate(
+            fpn_feats['p5'], scale_factor=2, mode='nearest'
+        )
+
+        fpn_feats['p3'] = self.fpn_params['output_c3'](
+            self.fpn_params['lateral_c3'](backbone_feats['c3'])
+        ) + F.interpolate(
+            fpn_feats['p4'], scale_factor=2, mode='nearest'
+        )
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -157,7 +183,13 @@ def get_fpn_location_coords(
         # TODO: Implement logic to get location co-ordinates below.          #
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        feat_coords = torch.stack(
+            torch.meshgrid(
+                torch.arange(feat_shape[2], device=device, dtype=dtype),
+                torch.arange(feat_shape[3], device=device, dtype=dtype),
+                indexing='ij'),
+            dim=-1).reshape(-1, 2)
+        location_coords[level_name] = (feat_coords + 0.5) * level_stride
         ######################################################################
         #                             END OF YOUR CODE                       #
         ######################################################################
@@ -196,7 +228,19 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5):
     # github.com/pytorch/vision/blob/main/torchvision/csrc/ops/cpu/nms_kernel.cpp
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    from torchvision.ops import box_iou
+    scores, indices = scores.sort(descending=True)
+    boxes = boxes[indices]
+    keep = []
+    while boxes.size(0) > 0:
+        keep.append(indices[0].item())
+        if boxes.size(0) == 1:
+            break
+        ious = box_iou(boxes[0].unsqueeze(0), boxes[1:]).squeeze(0)
+        mask = ious <= iou_threshold
+        boxes = boxes[1:][mask]
+        indices = indices[1:][mask]
+    keep = torch.tensor(keep, dtype=torch.long, device=boxes.device)
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################
